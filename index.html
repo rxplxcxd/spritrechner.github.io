@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FuelBook - Sprit · Auto · Statistiken</title>
+  <link rel="stylesheet" href="styles.css">
+
+  <!-- Firebase SDK - PASTE YOUR CONFIG BELOW -->
+
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+  <!-- Dexie for IndexedDB -->
+
+  <script src="https://cdn.jsdelivr.net/npm/dexie@3/dist/dexie.min.js"></script>
+
+  <!-- Chart.js for visualizations -->
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+</head>
+<body>
+
+  <!-- Login Screen -->
+
+  <div id="authScreen" class="auth-screen">
+    <div class="auth-card fade-in">
+      <div class="logo-big">🚗</div>
+      <h1>FuelBook</h1>
+      <p class="subtitle">Sprit · Auto · Statistiken</p>
+
+```
+  <div class="auth-tabs">
+    <button class="auth-tab active" data-mode="login">Anmelden</button>
+    <button class="auth-tab" data-mode="register">Registrieren</button>
+  </div>
+  
+  <form id="authForm" class="auth-form">
+    <input type="email" id="authEmail" placeholder="E-Mail" required>
+    <input type="password" id="authPassword" placeholder="Passwort" required>
+    <input type="password" id="authPasswordConfirm" placeholder="Passwort bestätigen" class="hidden">
+    
+    <div class="storage-option">
+      <label>
+        <input type="checkbox" id="useCloud">
+        <span>Cloud-Speicherung (Firebase)</span>
+      </label>
+      <small>Deaktiviert = Nur lokale Speicherung (Gerät)</small>
+    </div>
+    
+    <button type="submit" class="btn btn-primary">
+      <span id="authBtnText">Anmelden</span>
+    </button>
+    
+    <button type="button" id="localOnlyBtn" class="btn btn-secondary">
+      Lokal ohne Account nutzen
+    </button>
+  </form>
+  
+  <div id="authError" class="error-msg hidden"></div>
+</div>
+```
+
+  </div>
+
+  <!-- Main App -->
+
+  <div id="mainApp" class="hidden">
+
+```
+<!-- Header -->
+<header class="app-header">
+  <div class="header-content">
+    <div class="brand">
+      <div class="logo">🚗</div>
+      <div class="brand-text">
+        <div class="brand-name">FuelBook</div>
+        <div class="brand-sub">Sprit · Statistiken</div>
+      </div>
+    </div>
+    
+    <div class="header-actions">
+      <button class="icon-btn" id="themeToggle" title="Theme wechseln">
+        <span id="themeIcon">🌙</span>
+      </button>
+      <button class="icon-btn" id="syncBtn" title="Synchronisieren">
+        <span id="syncIcon">☁️</span>
+      </button>
+      <button class="icon-btn" id="userBtn" title="Account">
+        <span id="userIcon">👤</span>
+      </button>
+      <button class="icon-btn" id="logoutBtn" title="Abmelden">
+        <span>🚪</span>
+      </button>
+    </div>
+  </div>
+  
+  <!-- Active Car Bar -->
+  <div class="active-car-bar slide-down" id="activeCarBar">
+    <div class="car-thumb" id="carThumb">🚗</div>
+    <div class="car-info">
+      <div class="car-name" id="carName">Kein Auto ausgewählt</div>
+      <div class="car-meta" id="carMeta">Wähle ein Auto aus</div>
+    </div>
+    <div class="car-stats">
+      <div class="stat-value" id="carAvgPrice">--</div>
+      <div class="stat-label">Ø €/L</div>
+    </div>
+  </div>
+</header>
+
+<!-- Content -->
+<main class="app-content">
+  <div id="viewContainer"></div>
+</main>
+
+<!-- Bottom Navigation -->
+<nav class="bottom-nav">
+  <button class="nav-item active" data-view="dashboard">
+    <span class="nav-icon">🏠</span>
+    <span class="nav-label">Start</span>
+  </button>
+  <button class="nav-item" data-view="fillup">
+    <span class="nav-icon">⛽</span>
+    <span class="nav-label">Tanken</span>
+  </button>
+  <button class="nav-item" data-view="stats">
+    <span class="nav-icon">📊</span>
+    <span class="nav-label">Stats</span>
+  </button>
+  <button class="nav-item" data-view="cars">
+    <span class="nav-icon">🚗</span>
+    <span class="nav-label">Autos</span>
+  </button>
+  <button class="nav-item" data-view="settings">
+    <span class="nav-icon">⚙️</span>
+    <span class="nav-label">Settings</span>
+  </button>
+</nav>
+```
+
+  </div>
+
+  <!-- Toast Notifications -->
+
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="app.js"></script>
+
+</body>
+</html>
+
+<!-- 
+═══════════════════════════════════════════════════════════════
+  FIREBASE CONFIGURATION - TRAGE DEINE DATEN HIER EIN:
+═══════════════════════════════════════════════════════════════
+
+Öffne app.js und suche nach "FIREBASE CONFIG" (Zeile ~20)
+Ersetze die Platzhalter mit deinen Firebase Daten:
+
+const firebaseConfig = {
+  apiKey: "DEIN_API_KEY",
+  authDomain: "DEIN_PROJECT_ID.firebaseapp.com",
+  projectId: "DEIN_PROJECT_ID",
+  storageBucket: "DEIN_PROJECT_ID.appspot.com",
+  messagingSenderId: "DEINE_SENDER_ID",
+  appId: "DEINE_APP_ID"
+};
+
+So findest du deine Daten:
+1. Gehe zu console.firebase.google.com
+2. Wähle dein Projekt
+3. Klicke auf Einstellungen (⚙️) → Projekteinstellungen
+4. Scrolle zu "Deine Apps" → Web-App
+5. Kopiere die Config-Werte
+
+WICHTIG: 
+- Aktiviere Authentication (Email/Password) in Firebase Console
+- Aktiviere Firestore Database in Firebase Console
+- Setze Firestore Rules für User-Isolation (siehe Kommentar in app.js)
+
+═══════════════════════════════════════════════════════════════
+-->
