@@ -32,11 +32,12 @@
     *{box-sizing:border-box}
     html,body{height:100%}
     body{
-      margin:0; font-family:var(--ui); background:radial-gradient(1200px 700px at 10% -10%, rgba(94,234,212,.20), transparent 60%),
-                                               radial-gradient(900px 600px at 110% 10%, rgba(251,191,36,.18), transparent 55%),
-                                               var(--bg);
+      margin:0; font-family:var(--ui); background: var(--bg);
       color:var(--text);
     }
+    body.theme-light{--bg:#ffffff; --card:#ffffff; --muted:#5b6477; --text:#0f172a; --line: rgba(2,6,23,.10); --shadow: 0 12px 30px rgba(2,6,23,.08);} 
+    body.theme-dark{--bg:#000000; --card:#121212; --muted:#8a93a6; --text:#e8ebf2; --line: rgba(255,255,255,.10); --shadow: 0 12px 30px rgba(0,0,0,.45);} 
+    
     a{color:inherit; text-decoration:none}
     .wrap{max-width:1100px; margin:0 auto; padding:16px 14px 90px}
     header{
@@ -193,6 +194,7 @@
     .nowrap{white-space:nowrap}
     .smallcaps{font-variant:all-small-caps; letter-spacing:.08em}
     .hidden{display:none !important}
+    .fade{animation:fadeIn .18s ease-out} @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
     .spinner{
       width:16px; height:16px; border-radius:999px;
       border:2px solid rgba(255,255,255,.25); border-top-color: rgba(94,234,212,.9);
@@ -218,6 +220,20 @@
     <div class="pill">
       <div class="chip"><span class="smallcaps">Auto</span> <b id="activeCarName">--</b></div>
       <div class="chip"><span class="smallcaps">DB</span> <b id="dbStatus">offline</b></div>
+      <button class="chip" id="themeToggle" type="button" title="Tag/Nacht umschalten">🌓 <b id="themeLabel">Auto</b></button>
+    </div>
+  </div>
+  <div class="wrap" style="padding-top:0">
+    <div class="card" id="activeCarBar" style="margin:0 14px 12px; padding:10px; display:flex; align-items:center; gap:10px">
+      <div class="thumb" style="width:44px;height:44px" id="activeCarThumb">🚗</div>
+      <div style="flex:1; min-width:0">
+        <div class="title" id="activeCarTitle" style="font-weight:900; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">—</div>
+        <div class="sub" id="activeCarMeta" style="color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">—</div>
+      </div>
+      <div class="rightAlign" style="min-width:130px">
+        <div class="mono" style="font-weight:900" id="activeCarKpi">—</div>
+        <div class="tiny muted" id="activeCarKpiLabel">Ø Preis/L</div>
+      </div>
     </div>
   </div>
 </header>
@@ -280,6 +296,25 @@
     costs: "id, carId, date, category, createdAt"
   });
 
+  // v2 adds base consumption/price + theme
+  db.version(2).stores({
+    cars: "id, name, createdAt",
+    stations: "id, name, brand, createdAt",
+    fillups: "id, carId, datetime, stationId, odometerTotal",
+    trips: "id, carId, startTime, endTime, distanceKm, createdAt",
+    costs: "id, carId, date, category, createdAt"
+  }).upgrade(async tx => {
+    const cars = await tx.table("cars").toArray();
+    for (const c of cars){
+      if (c.baseLper100 === undefined) c.baseLper100 = null;
+      if (c.basePricePerLiter === undefined) c.basePricePerLiter = null;
+      if (c.wearPerKm === undefined) c.wearPerKm = null;
+      await tx.table("cars").put(c);
+    }
+  });
+
+  // ========= Settings (in localStorage) =========
+
   // ========= Settings (in localStorage) =========
   const LS = {
     get(key, fallback=null){ try{ const v = localStorage.getItem(key); return v==null? fallback : JSON.parse(v); }catch{return fallback} },
@@ -291,10 +326,25 @@
     activeCarId: null,
     defaultWearPerKm: 0.06,   // €
     routeProvider: "osrm",    // osrm only in this single-file
-    lastExportAt: null
+    lastExportAt: null,
+    theme: "auto"
   });
 
   function saveSettings(){ LS.set(SETTINGS_KEY, settings); }
+
+  function applyTheme(){
+    const t = settings.theme || "auto";
+    const body = document.body;
+    body.classList.remove("theme-light","theme-dark");
+    if(t === "light") body.classList.add("theme-light");
+    else if(t === "dark") body.classList.add("theme-dark");
+    else {
+      // auto: follow system
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) body.classList.add("theme-light");
+      else body.classList.add("theme-dark");
+    }
+    $("#themeLabel").textContent = t === "auto" ? "Auto" : (t === "light" ? "Tag" : "Nacht");
+  }
 
   // ========= Seed (first-run) =========
   async function ensureSeed(){
@@ -305,11 +355,15 @@
     await db.cars.bulkAdd([
       {
         id:id1, name:"VW Polo 6N2 (Beispiel)", fuelType:"E5/E10", tankCapacity:45,
+        baseLper100: 6.8,
+        basePricePerLiter: null,
         wearPerKm:0.06, note:"Du kannst das Beispiel löschen.",
         imageDataUrl:null, createdAt:new Date().toISOString()
       },
       {
         id:id2, name:"Roadtrip Auto (Beispiel)", fuelType:"Diesel", tankCapacity:60,
+        baseLper100: 7.5,
+        basePricePerLiter: null,
         wearPerKm:0.08, note:"",
         imageDataUrl:null, createdAt:new Date().toISOString()
       }
@@ -404,13 +458,23 @@
   }
 
   async function basisForCar(carId){
+    const car = await db.cars.get(carId);
     const fillups = await db.fillups.where("carId").equals(carId).toArray();
     const used = fillups.filter(f => isFinite(f.liters) && isFinite(f.totalPrice) && f.liters>0 && f.totalPrice>0);
     const sumL = used.reduce((s,x)=>s + x.liters, 0);
     const sumE = used.reduce((s,x)=>s + x.totalPrice, 0);
-    const avgPricePerLiter = sumL>0 ? sumE/sumL : NaN;
-    const { avgLper100, samples } = calcConsumptionFromFillupsChrono(fillups);
+
+    let avgPricePerLiter = sumL>0 ? sumE/sumL : NaN;
+    const cons = calcConsumptionFromFillupsChrono(fillups);
+    let avgLper100 = cons.avgLper100;
+    const samples = cons.samples;
+
+    // Fallbacks: allow manual base values on the car (so estimates work even without history)
+    if(!isFinite(avgPricePerLiter) && isFinite(car?.basePricePerLiter)) avgPricePerLiter = car.basePricePerLiter;
+    if(!isFinite(avgLper100) && isFinite(car?.baseLper100)) avgLper100 = car.baseLper100;
+
     return { avgPricePerLiter, avgLper100, samples, fillupsCount: fillups.length };
+  };
   }
 
   // ========= App State / Router =========
@@ -436,7 +500,15 @@
 
   async function refreshTop(){
     $("#dbStatus").textContent = "offline";
-    try{ await db.open(); $("#dbStatus").textContent = "ok"; }catch{}
+    try{ await db.open();
+    // Try to request persistent storage (helps iOS/Android browsers not evict IndexedDB).
+    try{
+      if(navigator.storage?.persisted){
+        const isPersisted = await navigator.storage.persisted();
+        if(!isPersisted && navigator.storage.persist){ await navigator.storage.persist(); }
+      }
+    }catch{}
+     $("#dbStatus").textContent = "ok"; }catch{}
     const cars = await db.cars.toArray();
     const active = cars.find(c => c.id === settings.activeCarId) || cars[0] || null;
     if(active && settings.activeCarId !== active.id){ settings.activeCarId = active.id; saveSettings(); }
@@ -693,7 +765,7 @@
       const id = e.target.value;
       settings.activeCarId = id; saveSettings();
       await refreshTop();
-      render(); // rerender to update right panel
+    render(); // rerender to update right panel
     });
 
     $("#clear").onclick = ()=>{
@@ -1475,11 +1547,19 @@
             <label>Tank (L)</label>
             <input id="carTank" inputmode="decimal" placeholder="z.B. 45" />
           </div>
+          <div>
+            <label>Basis L/100</label>
+            <input id="carBaseL" inputmode="decimal" placeholder="z.B. 6,8" />
+          </div>
         </div>
         <div class="row tight">
           <div>
             <label>Verschleiß €/km</label>
             <input id="carWear" inputmode="decimal" placeholder="z.B. 0,06" />
+          </div>
+          <div>
+            <label>Basis €/L</label>
+            <input id="carBaseP" inputmode="decimal" placeholder="z.B. 1,75" />
           </div>
           <div>
             <label>Bild (optional)</label>
@@ -1566,6 +1646,7 @@
         <div class="right">
           <button class="btn secondary tiny" data-act="active">${settings.activeCarId===c.id?"Aktiv ✓":"Aktiv"}</button>
           <button class="btn secondary tiny" data-act="edit" style="margin-top:6px">Bearbeiten</button>
+          <button class="btn bad tiny" data-act="del" style="margin-top:6px">Löschen</button>
         </div>
       </div>
     `).join("") : `<div class="hint">Noch keine Autos. Lege eins unten an.</div>`;
@@ -1577,6 +1658,27 @@
       const id = it.dataset.id;
       if(btn.dataset.act === "active"){
         settings.activeCarId = id; saveSettings();
+        await refreshTop();
+        render();
+      }
+      if(btn.dataset.act === "del"){
+        const c = await db.cars.get(id);
+        if(!c) return;
+        const cascade = confirm(`Auto "${c.name}" löschen?\n\nOK = auch alle zugehörigen Tankungen & Fahrten löschen.\nAbbrechen = nur Auto entfernen (Daten bleiben, aber ohne Zuordnung).`);
+        if(cascade){
+          await db.transaction("rw", db.cars, db.fillups, db.trips, async ()=>{
+            await db.fillups.where("carId").equals(id).delete();
+            await db.trips.where("carId").equals(id).delete();
+            await db.cars.delete(id);
+          });
+        }else{
+          await db.cars.delete(id);
+        }
+        if(settings.activeCarId === id){
+          const remaining = await db.cars.orderBy("createdAt").toArray();
+          settings.activeCarId = remaining[0]?.id || null;
+          saveSettings();
+        }
         await refreshTop();
         render();
       }
@@ -1594,7 +1696,9 @@
       $("#carName").value = c?.name || "";
       $("#carFuel").value = c?.fuelType || "";
       $("#carTank").value = c?.tankCapacity ?? "";
+      $("#carBaseL").value = isFinite(c?.baseLper100) ? String(c.baseLper100).replace(".", ",") : "";
       $("#carWear").value = isFinite(c?.wearPerKm) ? String(c.wearPerKm).replace(".", ",") : "";
+      $("#carBaseP").value = isFinite(c?.basePricePerLiter) ? String(c.basePricePerLiter).replace(".", ",") : "";
       $("#carNote").value = c?.note || "";
       $("#carImg").value = "";
       $("#delCar").disabled = !c;
@@ -1608,6 +1712,8 @@
       if(!name){ alert("Name fehlt."); return; }
       const fuelType = String($("#carFuel").value||"").trim() || null;
       const tankCapacity = toNum($("#carTank").value);
+      const baseLper100 = toNum($("#carBaseL").value);
+      const basePricePerLiter = toNum($("#carBaseP").value);
       const wearPerKm = toNum($("#carWear").value);
       const note = String($("#carNote").value||"").trim() || null;
 
@@ -1625,6 +1731,8 @@
         name,
         fuelType,
         tankCapacity: isFinite(tankCapacity) ? tankCapacity : null,
+        baseLper100: isFinite(baseLper100) ? baseLper100 : null,
+        basePricePerLiter: isFinite(basePricePerLiter) ? basePricePerLiter : null,
         wearPerKm: isFinite(wearPerKm) ? wearPerKm : null,
         note,
         imageDataUrl,
@@ -1817,10 +1925,73 @@
     await db.open();
     await ensureSeed();
     await refreshTop();
+    applyTheme();
+    const tt = $("#themeToggle");
+    if(tt){
+      tt.addEventListener("click", ()=>{
+        const cur = settings.theme || "auto";
+        settings.theme = (cur==="auto") ? "dark" : (cur==="dark" ? "light" : "auto");
+        saveSettings();
+        applyTheme();
+      });
+    }
+    try{
+      const mq = window.matchMedia("(prefers-color-scheme: light)");
+      mq.addEventListener?.("change", ()=>{ if((settings.theme||"auto")==="auto") applyTheme(); });
+    }catch{}
+
+    applyTheme();
+    const tt = $("#themeToggle");
+    if(tt){
+      tt.addEventListener("click", ()=>{
+        const cur = settings.theme || "auto";
+        settings.theme = (cur==="auto") ? "dark" : (cur==="dark" ? "light" : "auto");
+        saveSettings();
+        applyTheme();
+      });
+    }
+    try{
+      const mq = window.matchMedia("(prefers-color-scheme: light)");
+      mq.addEventListener?.("change", ()=>{ if((settings.theme||"auto")==="auto") applyTheme(); });
+    }catch{}
+
     if(!location.hash) setRoute("dashboard");
     render();
   })();
 
 </script>
 </body>
-</html>
+</html
+    // Update active car bar
+    const barThumb = $("#activeCarThumb");
+    const barTitle = $("#activeCarTitle");
+    const barMeta = $("#activeCarMeta");
+    const barKpi = $("#activeCarKpi");
+    const barKpiLabel = $("#activeCarKpiLabel");
+
+    if(active){
+      if(barThumb){
+        barThumb.innerHTML = active.imageDataUrl ? `<img alt="" src="${active.imageDataUrl}">` : "🚗";
+      }
+      if(barTitle) barTitle.textContent = active.name;
+      const basis = await basisForCar(active.id);
+      if(barMeta){
+        const bits = [];
+        if(active.fuelType) bits.push(active.fuelType);
+        if(isFinite(active.baseLper100) || isFinite(basis.avgLper100)) bits.push(`Basis ${fmt.num(isFinite(active.baseLper100)?active.baseLper100:basis.avgLper100,2)} L/100`);
+        bits.push(`Verschleiß ${fmt.num(active.wearPerKm ?? settings.defaultWearPerKm,2)} €/km`);
+        barMeta.textContent = bits.join(" · ");
+      }
+      if(barKpi){
+        barKpi.textContent = `${fmt.num(basis.avgPricePerLiter,3)} €/L`;
+      }
+      if(barKpiLabel) barKpiLabel.textContent = "Ø Preis/L";
+    }else{
+      if(barThumb) barThumb.textContent = "🚗";
+      if(barTitle) barTitle.textContent = "—";
+      if(barMeta) barMeta.textContent = "—";
+      if(barKpi) barKpi.textContent = "—";
+      if(barKpiLabel) barKpiLabel.textContent = "—";
+    }
+
+    >
